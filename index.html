@@ -149,10 +149,12 @@
     font-size: 7.5px;
     line-height: 1.15;
   }
-
-  img {
-    max-height: 85px !important;
-  }
+     .header-img {
+  width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  display: block;
+}
 }
   </style>
 </head>
@@ -522,10 +524,6 @@ function ordenarDespesas(despesas) {
   line-height:1.4;
   color:#fff;
 ">
-    ${data.despachante.nome}<br>
-    ${data.despachante.endereco}<br>
-    ${data.despachante.cidade} - CEP: ${data.despachante.cep}<br>
-    CNPJ: ${data.despachante.cnpj}
   </div>
 </div>
 
