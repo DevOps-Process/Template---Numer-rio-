@@ -108,21 +108,49 @@
     }
 
     @media print {
-      body {
-        background: white;
-        padding: 0;
-      }
+  @page {
+    size: A4 portrait;
+    margin: 5mm;
+  }
 
-      .controls {
-        display: none;
-      }
+  body {
+    background: white;
+    padding: 0;
+    margin: 0;
+  }
 
-      #printArea {
-        width: 100%;
-        margin: 0;
-        padding: 10mm;
-      }
-    }
+  .controls {
+    display: none;
+  }
+
+  #printArea {
+    width: 100%;
+    min-height: auto;
+    margin: 0;
+    padding: 0;
+    transform: scale(0.82);
+    transform-origin: top left;
+  }
+
+  .section {
+    margin-top: 6px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  table {
+    font-size: 9px;
+  }
+
+  td, th {
+    padding: 2px;
+  }
+
+  .text-small {
+    font-size: 8px;
+    line-height: 1.2;
+  }
+}
   </style>
 </head>
 
