@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gerador de Numerário</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #eee;
+      margin: 0;
+      padding: 20px;
+    }
+
+    .controls {
+      margin-bottom: 20px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button, select, input {
+      padding: 8px;
+    }
+
+    #printArea {
+      width: 794px;
+      min-height: 1123px;
+      background: white;
+      margin: auto;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    .header {
+      background: #111;
+      color: white;
+      padding: 16px;
+      border-bottom: 4px solid red;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 28px;
+      font-weight: bold;
+      color: #f2b400;
+    }
+
+    .title {
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .section {
+      margin-top: 14px;
+      border: 1px solid #999;
+    }
+
+    .section-title {
+      background: #111;
+      color: white;
+      font-weight: bold;
+      padding: 5px;
+      font-size: 12px;
+    }
+
+    .yellow {
+      background: #f6b21a;
+      color: #000;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+
+    td, th {
+      border: 1px solid #999;
+      padding: 4px;
+    }
+
+    th {
+      background: #eee;
+    }
+
+    .right {
+      text-align: right;
+    }
+
+    .center {
+      text-align: center;
+    }
+
+    .text-small {
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .footer {
+      margin-top: 20px;
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+
+      .controls {
+        display: none;
+      }
+
+      #printArea {
+        width: 100%;
+        margin: 0;
+        padding: 10mm;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="controls">
+    <input type="file" id="fileInput" accept=".xls,.html,.txt" />
+
+    <select id="tipoRepasse">
+      <option value="">Selecione o tipo</option>
+      <option value="P1">P1</option>
+      <option value="P2">P2+</option>
+      <option value="EXTRA">Extra</option>
+    </select>
+
+    <input
+      type="number"
+      id="valorExtra"
+      placeholder="Valor extra"
+      step="0.01"
+      style="display:none;"
+    />
+
+    <button onclick="window.print()">Imprimir / Salvar PDF</button>
+  </div>
+
+  <div id="printArea">
+    <p>Selecione o arquivo .xls para gerar o template.</p>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const printArea = document.getElementById("printArea");
+    const tipoRepasse = document.getElementById("tipoRepasse");
+    const valorExtra = document.getElementById("valorExtra");
+
+    let currentData = null;
+
+    fileInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      currentData = await readNumerarioFile(file);
+      atualizarTemplate();
+    });
+
+    tipoRepasse.addEventListener("change", () => {
+      valorExtra.style.display = tipoRepasse.value === "EXTRA" ? "inline-block" : "none";
+      atualizarTemplate();
+    });
+
+    valorExtra.addEventListener("input", atualizarTemplate);
+
+    function atualizarTemplate() {
+      if (!currentData) return;
+
+      const dataComRepasse = aplicarRepasse(currentData);
+      printArea.innerHTML = renderNumerarioTemplate(dataComRepasse);
+    }
+
+    async function readNumerarioFile(file) {
+      const html = await file.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+
+      const text = doc.body.innerText
+        .replace(/\r/g, "")
+        .replace(/\n{2,}/g, "\n")
+        .trim();
+
+      function getAfter(label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(escaped + "\\s*:?\\s*([^\\n\\r{]+)", "i");
+  const match = text.match(regex);
+
+  return match
+    ? match[1].replace("{", "").trim()
+    : "";
+}
+
+      function getByRegex(regex) {
+        const match = text.match(regex);
+        return match ? match[1].trim() : "";
+      }
+
+      return {
+        numerario: getByRegex(/NUMERÁRIO\s+([^\n]+)/i),
+
+        despachante: {
+          nome: "PROCESS LOGISTICA E COMERCIO EXTERIOR LTDA.",
+          endereco: "Rua Alexandre Herculano - 197 - 8º ANDAR - Gonzaga",
+          cidade: "Santos - SP",
+          cep: "11050-031",
+          cnpj: "31.747.180/0001-01"
+        },
+
+        tomador: {
+          nome: "HELDT IMPORTS LTDA",
+          cnpj: getByRegex(/CNPJ:\s*([\d./-]+)/i),
+          endereco: getAfter("Endereço"),
+          bairro: getAfter("Bairro"),
+          cidade: getAfter("Cidade"),
+          telefone: getAfter("Telefone")
+        },
+
+        importador: getAfter("Importador"),
+        referenciaCliente: getAfter("Referencia Cliente"),
+        processo: getAfter("Processo Nr."),
+        pesoBruto: getAfter("Peso bruto"),
+        pesoCubado: getAfter("Peso Cubado"),
+        house: getAfter("Número House"),
+        origem: getAfter("Origem"),
+        saida: getAfter("Saída"),
+        destino: getAfter("Destino"),
+        navioViagem: getAfter("Navio / Viagem"),
+
+        resumoValores: readResumoValores(text),
+        despesas: readDespesas(text),
+
+        banco: {
+            banco: "ITAU - 341",
+            agencia: getAfter("Agência"),
+            conta: getContaBancaria(text),
+            pix: "CNPJ 31.747.180/0001-01"
+        },
+        dataEmissao: getAfter("Data Emissão"),
+        dataVencimento: getAfter("Data Vencimento")
+      };
+    }
+
+    function getContaBancaria(text) {
+  const linhas = text.split("\n").map(l => l.trim());
+
+  const linhaConta = linhas.find(linha =>
+    /^Conta:/i.test(linha)
+  );
+
+  if (!linhaConta) return "";
+
+  return linhaConta
+    .replace(/^Conta:\s*/i, "")
+    .replace(/[{}]/g, "")
+    .trim();
+}
+    function readResumoValores(text) {
+      const itens = ["CIF", "FOB", "FRETE", "SEGURO", "ACRÉSCIMOS", "ACRESCIMOS"];
+
+      return itens.map(item => {
+        const regex = new RegExp(item + "\\s+([\\d.,]+)\\s+([\\d.,]+)", "i");
+        const match = text.match(regex);
+
+        return {
+          descricao: item === "ACRESCIMOS" ? "ACRÉSCIMOS" : item,
+          real: match ? match[1] : "",
+          usd: match ? match[2] : ""
+        };
+      }).filter(item => item.real || item.usd);
+    }
+
+    function readDespesas(text) {
+  const inicio = text.search(/Valores debitados na conta do Despachante/i);
+  const fim = text.search(/Dados bancários/i);
+
+  if (inicio === -1) return [];
+
+  const bloco = text.substring(inicio, fim > inicio ? fim : text.length);
+
+  const regex = /(.+?)\s+(BRL|USD)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/gi;
+
+  const despesas = [];
+  let match;
+
+  while ((match = regex.exec(bloco)) !== null) {
+    let descricao = match[1]
+      .replace(/Valores debitados na conta do Despachante/gi, "")
+      .replace(/Descrição/gi, "")
+      .replace(/Moeda/gi, "")
+      .replace(/Valor na Moeda/gi, "")
+      .replace(/Taxa/gi, "")
+      .replace(/Valor em Reais/gi, "")
+      .trim();
+
+    if (!descricao || /total/i.test(descricao)) continue;
+
+    despesas.push({
+      descricao: descricao,
+      moeda: match[2],
+      valorMoeda: match[3],
+      taxa: match[4],
+      valorReais: match[5]
+    });
+  }
+
+  return despesas;
+}
+
+    function moedaParaNumero(valor) {
+      return Number(
+        String(valor)
+          .replace(/\./g, "")
+          .replace(",", ".")
+      ) || 0;
+    }
+
+    function numeroParaMoeda(valor) {
+      return valor.toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+
+   function aplicarRepasse(data) {
+  const novoData = structuredClone(data);
+  const tipo = tipoRepasse.value;
+
+  let valores = {};
+
+  if (tipo === "P1") {
+    valores = {
+      "Despesas Desembaraço": 1534,
+      "Armazenagem": 850,
+      "Desembaraço Aduaneiro": 850,
+      "Taxa de Handling": 3766
+    };
+  }
+
+  if (tipo === "P2") {
+    valores = {
+      "Despesas Desembaraço": 1723,
+      "Armazenagem": 270,
+      "Desembaraço Aduaneiro": 473,
+      "Taxa de Handling": 2534
+    };
+  }
+
+  if (tipo === "EXTRA") {
+    const totalExtra = Number(valorExtra.value || 0);
+
+    valores = {
+      "Despesas Desembaraço": totalExtra * 0.2191428571,
+      "Armazenagem": totalExtra * 0.1214285714,
+      "Desembaraço Aduaneiro": totalExtra * 0.1214285714,
+      "Taxa de Handling": totalExtra * 0.538
+    };
+  }
+
+  Object.entries(valores).forEach(([descricao, valor]) => {
+    const existente = novoData.despesas.find(item =>
+      normalizarTexto(item.descricao) === normalizarTexto(descricao)
+    );
+
+    if (existente) {
+      const atual = moedaParaNumero(existente.valorReais);
+      const novoValor = atual + valor;
+
+      existente.valorMoeda = numeroParaMoeda(novoValor);
+      existente.valorReais = numeroParaMoeda(novoValor);
+    } else {
+      novoData.despesas.push({
+        descricao,
+        moeda: "BRL",
+        valorMoeda: numeroParaMoeda(valor),
+        taxa: "1,00000",
+        valorReais: numeroParaMoeda(valor)
+      });
+    }
+  });
+
+  ordenarDespesas(novoData.despesas);
+
+  return novoData;
+}
+
+function normalizarTexto(texto) {
+  return String(texto)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function ordenarDespesas(despesas) {
+  const ordemTaxas = [
+    /^II$/,
+    /^IPI$/,
+    /^PIS/,
+    /^COFINS/,
+    /^ICMS$/,
+    /^AFRMM$/,
+    /SISCOMEX/,
+    /ARMAZENAGEM/,
+    /TRANSPORTE RODOVIARIO|TRANSP RODOVIARIO/,
+    /EMISSAO DE NFE|EMISSAO NF/,
+    /DESPESAS DESEMBARACO/,
+    /DESEMBARACO ADUANEIRO/,
+    /TAXA DE HANDLING/
+  ];
+
+  despesas.sort((a, b) => {
+    const nomeA = normalizarTexto(a.descricao);
+    const nomeB = normalizarTexto(b.descricao);
+
+    const indexA = ordemTaxas.findIndex(regex => regex.test(nomeA));
+    const indexB = ordemTaxas.findIndex(regex => regex.test(nomeB));
+
+    if (indexA === -1 && indexB === -1) return 0;
+    if (indexA === -1) return 1;
+    if (indexB === -1) return -1;
+
+    return indexA - indexB;
+  });
+}
+
+    function calcularTotalDespesas(despesas) {
+      return despesas.reduce((acc, item) => {
+        return acc + moedaParaNumero(item.valorReais);
+      }, 0);
+    }
+
+    function renderNumerarioTemplate(data) {
+  const despesasRows = data.despesas.map(item => {
+    const valorSimulacao = moedaParaNumero(item.valorReais);
+    const valorMargem = valorSimulacao * 1.10;
+
+    return `
+      <tr>
+        <td>${item.descricao}</td>
+        <td class="right">${numeroParaMoeda(valorSimulacao)}</td>
+        <td class="right">${numeroParaMoeda(valorMargem)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const totalSimulacao = data.despesas.reduce((acc, item) => {
+    return acc + moedaParaNumero(item.valorReais);
+  }, 0);
+
+  const totalMargem = totalSimulacao * 1.10;
+
+  return `
+        <div style="
+  width:100%;
+  margin-bottom:12px;
+  position:relative;
+  min-height:120px;
+">
+  <img 
+    src="cabecalho.png" 
+    style="
+      width:100%;
+      max-height:120px;
+      object-fit:contain;
+      display:block;
+    "
+  >
+
+  <div style="
+  position:absolute;
+  right:20px;
+  top:18px;
+  z-index:10;
+  text-align:right;
+  font-size:10px;
+  font-weight:bold;
+  line-height:1.4;
+  color:#fff;
+">
+    ${data.despachante.nome}<br>
+    ${data.despachante.endereco}<br>
+    ${data.despachante.cidade} - CEP: ${data.despachante.cep}<br>
+    CNPJ: ${data.despachante.cnpj}
+  </div>
+</div>
+
+        <div class="section">
+          <table>
+            <tr>
+              <th>Nº PROCESSO</th>
+              <th>CLIENTE</th>
+              <th>REFERÊNCIA</th>
+              <th>DESTINO</th>
+              <th>SAÍDA</th>
+            </tr>
+            <tr>
+              <td>${data.processo}</td>
+              <td>${data.importador || data.tomador.nome}</td>
+              <td>${data.referenciaCliente}</td>
+              <td>${data.destino}</td>
+              <td>${data.saida}</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="section">
+          <div class="section-title">DADOS DA CARGA</div>
+          <table>
+            <tr>
+              <td><b>House:</b> ${data.house}</td>
+              <td><b>Origem:</b> ${data.origem}</td>
+              <td><b>Navio / Viagem:</b> ${data.navioViagem}</td>
+            </tr>
+            <tr>
+              <td><b>Peso Bruto:</b> ${data.pesoBruto}</td>
+              <td><b>Peso Cubado:</b> ${data.pesoCubado}</td>
+              <td><b>Numerário:</b> ${data.numerario}</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="section">
+         <div class="section-title">DADOS DO CLIENTE</div>
+         <table>
+           <tr><td><b>Cliente:</b> ${data.tomador.nome}</td></tr>
+           <tr><td><b>CNPJ:</b> ${data.tomador.cnpj}</td></tr>
+           <tr><td><b>Endereço:</b> ${data.tomador.endereco}</td></tr>
+           <tr><td><b>Bairro:</b> ${data.tomador.bairro}</td></tr>
+           <tr><td><b>Cidade:</b> ${data.tomador.cidade}</td></tr>
+           <tr><td><b>Telefone:</b> ${data.tomador.telefone}</td></tr>
+         </table>
+       </div>
+
+        <div class="section" style="padding-bottom:0;">
+  <table>
+  <tr>
+    <th style="background:#000; color:#fff;">Descrição</th>
+    <th style="background:#000; color:#fff;">Valor Simulação</th>
+    <th style="background:#000; color:#fff;">Valor Margem 10%</th>
+  </tr>
+
+    ${despesasRows}
+  </table>
+
+<div style="
+  background:#dbe5f1;
+  margin-top:5px;
+  padding:5px 10px;
+  font-weight:bold;
+  font-size:14px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+">
+  <span>TOTAL DO NUMERÁRIO</span>
+
+  <span style="font-size:16px;">
+    R$ ${numeroParaMoeda(totalSimulacao)}
+  </span>
+</div>
+
+<div style="
+  background:#f2b400;
+  margin-top:3px;
+  padding:5px 10px;
+  font-weight:bold;
+  font-size:14px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+">
+  <span>DEPÓSITO COM 10% DA MARGEM DE SEGURANÇA</span>
+
+  <span style="font-size:16px;">
+    R$ ${numeroParaMoeda(totalMargem)}
+  </span>
+</div>
+</div>
+
+<div class="section">
+  <div class="section-title">CONSIDERAÇÕES FINAIS</div>
+  <div class="text-small" style="padding: 8px;">
+    *Os valores são baseados de acordo com a última ressimulação enviada antes do embarque. 
+    A diferença para mais ocorre por conta da variação cambial juntamente com a margem de segurança repassada pelo despachante.<br><br>
+
+    *Nós levamos em conta fatores e despesas que podem incidir no processo de nacionalização, como: canais de parametrização diferentes de verde que podem acontecer devido a uma interpretação arbitrária do fiscal.<br><br>
+
+    *Reduções ou isenções da margem são totalmente negociáveis visto que o numerário é apenas uma previsão.<br><br>
+
+    *Para facilitação de localização de pagamento, recomenda-se efetuar uma única transação com o valor integral.<br><br>
+
+    *No final do processo apresentaremos todos os comprovantes e o faturamento final para verificar o saldo a seu favor ou a diferença a ser cobrada. Havendo saldo positivo a diferença será devolvida.<br><br>
+
+    <b>TRANSPORTE RODOVIÁRIO</b><br><br>
+
+    *Qualquer alteração da operação poderá acarretar em recálculo do valor do frete.<br>
+    *Caso seja necessário ajudante para carregamento, será repassado o custo de R$ 220,00 por homem.<br>
+    *Retirada ou Devolução fora da margem direita, terá custo adicional do frete variando até R$ 450,00 a depender do Depot indicado pelo Armador.<br>
+    *Free time para descarga de 05 horas, após este prazo haverá incidência de diária de R$ 900,00 por veiculo.<br>
+    *Cargas acima de R$ 1 milhão pode sofrer alteração no valor do frete.<br>
+    *Local diferente do endereço da Nota Fiscal Deve constar em Dados Adicionais/Observações da NF.<br>
+    *Descarga por conta do recebedor. Caso seja necessário auxilio da transportadora, consultar antecipadamente.<br>
+    *No modal FCL, em caso de falta de janelas para devolução do equipamento dentro do período da operação, as possíveis despesas extras é de responsabilidade do importador.<br>
+    *Em caso de cobrança de lavagem do equipamento os custos serão repassados ao importador.<br><br>
+
+    Shenzhen Office: A1807, Huangdu Square, Binhe Avenue, Futian, 518010<br>
+    Santos Office: R. Alexandre Herculano, 197 - 5º Andar - Gonzaga, Santos - Sp, 11050-030<br>
+    Itajaí Office: Rua Uruguai 223, Sala 1405A, Centro, Itajaí - SC, 88302-203
+  </div>
+</div>
+
+<div style="
+  background:#000;
+  color:#fff;
+  font-weight:bold;
+  padding:8px;
+  margin-top:12px;
+  font-size:13px;
+">
+  * O numerário é apenas uma previsão dos impostos e despesas e não reflete o valor real da sua importação!
+</div>
+
+
+
+</div>
+        <div class="section">
+  <table>
+    <tr>
+      <td><b>Data Emissão:</b> ${data.dataEmissao}</td>
+      <td><b>Data Vencimento:</b> ${data.dataVencimento}</td>
+    </tr>
+  </table>
+</div>
+
+<div class="section">
+  <div class="section-title">DADOS BANCÁRIOS</div>
+  <table>
+    <tr>
+      <td style="padding: 18px 70px;">
+        <b>PROCESS LOGISTICA E COMERCIO EXTERIOR LTDA</b><br>
+        CNPJ: 31.747.180/0001-01<br>
+        AGÊNCIA: ${data.banco.agencia}<br>
+        CONTA: ${data.banco.conta}<br>
+        BANCO ITAU - 341<br><br>
+        <b>PIX: CNPJ 31.747.180/0001-01</b>
+      </td>
+      <td class="center" style="width:180px;">
+  <img 
+    src="logo12p.png"
+    style="
+      width:120px;
+      object-fit:contain;
+    "
+  >
+</td>
+    </tr>
+  </table>
+</div>
+      `;
+    }
+  </script>
+
+</body>
+</html>
