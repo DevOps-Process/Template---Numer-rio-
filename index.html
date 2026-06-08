@@ -24,13 +24,12 @@
     }
 
     #printArea {
-      width: 794px;
-      min-height: 1123px;
-      background: white;
-      margin: auto;
-      padding: 20px;
-      box-sizing: border-box;
-    }
+  width: 794px;
+  background: white;
+  margin: auto;
+  padding: 12px;
+  box-sizing: border-box;
+}
 
     .header {
       background: #111;
@@ -107,16 +106,18 @@
       align-items: flex-end;
     }
 
-    @media print {
+   @media print {
   @page {
     size: A4 portrait;
-    margin: 5mm;
+    margin: 4mm;
   }
 
-  body {
-    background: white;
-    padding: 0;
+  html, body {
+    width: 210mm;
+    height: 297mm;
     margin: 0;
+    padding: 0;
+    background: white;
   }
 
   .controls {
@@ -124,22 +125,20 @@
   }
 
   #printArea {
-    width: 100%;
-    min-height: auto;
-    margin: 0;
+    width: 202mm;
+    margin: 0 auto;
     padding: 0;
-    transform: scale(0.82);
-    transform-origin: top left;
+    min-height: auto;
   }
 
   .section {
-    margin-top: 6px;
-    break-inside: avoid;
+    margin-top: 5px;
     page-break-inside: avoid;
+    break-inside: avoid;
   }
 
   table {
-    font-size: 9px;
+    font-size: 8.5px;
   }
 
   td, th {
@@ -147,8 +146,12 @@
   }
 
   .text-small {
-    font-size: 8px;
-    line-height: 1.2;
+    font-size: 7.5px;
+    line-height: 1.15;
+  }
+
+  img {
+    max-height: 85px !important;
   }
 }
   </style>
