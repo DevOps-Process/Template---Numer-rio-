@@ -181,7 +181,32 @@
 
     <button onclick="window.print()">Imprimir / Salvar PDF</button>
   </div>
+<div id="glossarioRepasse" style="display:none;"></div>
+  #glossarioRepasse {
+  width: 794px;
+  margin: 0 auto 15px auto;
+  background: #fff;
+  border: 1px solid #999;
+  padding: 10px;
+  box-sizing: border-box;
+  font-size: 12px;
+}
 
+#glossarioRepasse table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#glossarioRepasse th {
+  background: #000;
+  color: #fff;
+}
+
+@media print {
+  #glossarioRepasse {
+    display: none !important;
+  }
+}
   <div id="printArea">
     <p>Selecione o arquivo .xls para gerar o template.</p>
   </div>
@@ -478,17 +503,15 @@ function ordenarDespesas(despesas) {
 
     function renderNumerarioTemplate(data) {
   const despesasRows = data.despesas.map(item => {
-    const valorSimulacao = moedaParaNumero(item.valorReais);
-    const valorMargem = valorSimulacao * 1.10;
+  const valorSimulacao = moedaParaNumero(item.valorReais);
 
-    return `
-      <tr>
-        <td>${item.descricao}</td>
-        <td class="right">${numeroParaMoeda(valorSimulacao)}</td>
-        <td class="right">${numeroParaMoeda(valorMargem)}</td>
-      </tr>
-    `;
-  }).join("");
+  return `
+    <tr>
+      <td>${item.descricao}</td>
+      <td class="right">${numeroParaMoeda(valorSimulacao)}</td>
+    </tr>
+  `;
+}).join("");
 
   const totalSimulacao = data.despesas.reduce((acc, item) => {
     return acc + moedaParaNumero(item.valorReais);
@@ -578,12 +601,11 @@ function ordenarDespesas(despesas) {
   <table>
   <tr>
     <th style="background:#000; color:#fff;">Descrição</th>
-    <th style="background:#000; color:#fff;">Valor Simulação</th>
-    <th style="background:#000; color:#fff;">Valor Margem 10%</th>
+    <th style="background:#000; color:#fff;">Valor Importação</th>
   </tr>
 
-    ${despesasRows}
-  </table>
+  ${despesasRows}
+</table>
 
 <div style="
   background:#dbe5f1;
@@ -595,11 +617,9 @@ function ordenarDespesas(despesas) {
   justify-content:space-between;
   align-items:center;
 ">
+  <div class="linha-total-amarela">
   <span>TOTAL DO NUMERÁRIO</span>
-
-  <span style="font-size:16px;">
-    R$ ${numeroParaMoeda(totalSimulacao)}
-  </span>
+  <span>R$ ${numeroParaMoeda(totalSimulacao)}</span>
 </div>
 
 <div style="
