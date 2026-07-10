@@ -301,73 +301,458 @@
     }
 
     async function readNumerarioFile(file) {
-      const html = await file.text();
-      const doc = new DOMParser().parseFromString(html, "text/html");
+  /*
+   * O XLS utilizado é um arquivo HTML.
+   * A leitura por ArrayBuffer também corrige caracteres especiais.
+   */
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
 
-      const text = doc.body.innerText
-        .replace(/\r/g, "")
-        .replace(/\n{2,}/g, "\n")
-        .trim();
+  const textoUtf8 = new TextDecoder("utf-8").decode(bytes);
 
-      function getAfter(label) {
-        const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(escaped + "\\s*:?\\s*([^\\n\\r{]+)", "i");
-        const match = text.match(regex);
+  const charsetInformado =
+    textoUtf8.match(/charset\s*=\s*["']?([^"'\s;>]+)/i)?.[1]?.toLowerCase() || "";
 
-        return match
-          ? match[1].replace("{", "").trim()
-          : "";
-      }
+  const quantidadeCaracteresInvalidos =
+    (textoUtf8.match(/\uFFFD/g) || []).length;
 
-      function getByRegex(regex) {
-        const match = text.match(regex);
-        return match ? match[1].trim() : "";
-      }
+  const usarWindows1252 =
+    charsetInformado.includes("1252") ||
+    charsetInformado.includes("8859-1") ||
+    quantidadeCaracteresInvalidos > 1;
 
-      return {
-        numerario: getByRegex(/NUMERÁRIO\s+([^\n]+)/i),
+  const html = usarWindows1252
+    ? new TextDecoder("windows-1252").decode(bytes)
+    : textoUtf8;
 
-        despachante: {
-          nome: "PROCESS LOGISTICA E COMERCIO EXTERIOR LTDA.",
-          endereco: "Rua Alexandre Herculano - 197 - 8º ANDAR - Gonzaga",
-          cidade: "Santos - SP",
-          cep: "11050-031",
-          cnpj: "31.747.180/0001-01"
-        },
+  const doc = new DOMParser().parseFromString(html, "text/html");
 
-        tomador: {
-          nome: "HELDT IMPORTS LTDA",
-          cnpj: getByRegex(/CNPJ:\s*([\d./-]+)/i),
-          endereco: getAfter("Endereço"),
-          bairro: getAfter("Bairro"),
-          cidade: getAfter("Cidade"),
-          telefone: getAfter("Telefone")
-        },
+  function limparTexto(valor) {
+    return String(valor ?? "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\uFFFD/g, "")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(
+        /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,
+        " "
+      )
+      .replace(/[{}]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
-        importador: getAfter("Importador"),
-        referenciaCliente: getAfter("Referencia Cliente"),
-        processo: getAfter("Processo Nr."),
-        pesoBruto: getAfter("Peso bruto"),
-        pesoCubado: getAfter("Peso Cubado"),
-        house: getAfter("Número House"),
-        origem: getAfter("Origem"),
-        saida: getAfter("Saída"),
-        destino: getAfter("Destino"),
-        navioViagem: getAfter("Navio / Viagem"),
+  function finalizarValor(valor) {
+    return limparTexto(valor)
+      .replace(/\s*[-–—|]\s*$/, "")
+      .trim();
+  }
 
-        despesas: readDespesas(text),
+  /*
+   * Preserva cada linha e cada célula da planilha.
+   */
+  let linhas = Array.from(doc.querySelectorAll("tr"))
+    .map(tr =>
+      Array.from(tr.querySelectorAll(":scope > td, :scope > th"))
+        .map(celula => limparTexto(celula.textContent))
+    )
+    .filter(linha => linha.some(Boolean));
 
-        banco: {
-          banco: "ITAU - 341",
-          agencia: getAfter("Agência"),
-          conta: getContaBancaria(text),
-          pix: "CNPJ 31.747.180/0001-01"
-        },
+  /*
+   * Segurança para arquivos sem estrutura de tabela.
+   */
+  if (!linhas.length) {
+    linhas = String(doc.body?.innerText || "")
+      .split(/\r?\n/)
+      .map(linha => [limparTexto(linha)])
+      .filter(linha => linha.some(Boolean));
+  }
 
-        dataEmissao: getAfter("Data Emissão"),
-        dataVencimento: getAfter("Data Vencimento")
-      };
+  /*
+   * Texto mantido para a leitura das despesas.
+   * As tabulações separam corretamente as colunas.
+   */
+  const text = linhas
+    .map(linha => linha.filter(Boolean).join("\t"))
+    .join("\n");
+
+  const FONTE_ROTULOS = [
+    "Tomador",
+    "CNPJ",
+    "CPF",
+    "Endere[cç]o",
+    "Bairro",
+    "CEP",
+    "Cidade",
+    "Estado",
+    "Telefone",
+    "Importador",
+    "Refer[eê]ncia\\s+Cliente",
+    "Processo\\s+Nr\\.?",
+    "N[º°o]\\s*Processo",
+    "Peso\\s+Bruto",
+    "Peso\\s+Cubado",
+    "N[úu]mero\\s+House",
+    "Numero\\s+House",
+    "House",
+    "Origem",
+    "Sa[íi]da",
+    "Destino",
+    "Navio\\s*\\/\\s*Viagem",
+    "Numer[áa]rio",
+    "Ag[eê]ncia",
+    "Conta",
+    "Data\\s+(?:de\\s+)?Emiss[aã]o",
+    "Data\\s+(?:de\\s+)?Vencimento",
+    "Resumo\\s+de\\s+Valores",
+    "Taxa\\s+USD\\s+em",
+    "Real\\s+R\\$",
+    "Dados\\s+Banc[aá]rios",
+    "Valores\\s+debitados"
+  ].join("|");
+
+  const regexInicioRotulo = new RegExp(
+    `^(?:${FONTE_ROTULOS})\\s*:?`,
+    "i"
+  );
+
+  /*
+   * Impede que um campo capture os próximos.
+   *
+   * Exemplo:
+   * Origem: NINGBO Saída: ... Destino: ...
+   *
+   * Retorna somente NINGBO.
+   */
+  function cortarNoProximoRotulo(valor) {
+    let resultado = limparTexto(valor);
+
+    if (!resultado) return "";
+
+    const regexProximoRotulo = new RegExp(
+      `(?:${FONTE_ROTULOS})\\s*:?`,
+      "i"
+    );
+
+    const match = regexProximoRotulo.exec(resultado);
+
+    if (match && match.index > 0) {
+      resultado = resultado.substring(0, match.index);
+    } else if (match && match.index === 0) {
+      return "";
     }
+
+    return finalizarValor(resultado);
+  }
+
+  /*
+   * Procura um rótulo e retorna apenas o valor daquele campo.
+   */
+  function obterCampo(
+    padroes,
+    linhaInicial = 0,
+    linhaFinal = linhas.length
+  ) {
+    for (
+      let indiceLinha = linhaInicial;
+      indiceLinha < linhaFinal;
+      indiceLinha++
+    ) {
+      const linha = linhas[indiceLinha];
+
+      for (
+        let indiceCelula = 0;
+        indiceCelula < linha.length;
+        indiceCelula++
+      ) {
+        const celula = limparTexto(linha[indiceCelula]);
+
+        if (!celula) continue;
+
+        for (const padrao of padroes) {
+          const match = celula.match(padrao);
+
+          if (!match) continue;
+
+          const restante = limparTexto(
+            celula.substring(
+              match.index + match[0].length
+            )
+          );
+
+          const valorNaMesmaCelula =
+            cortarNoProximoRotulo(restante);
+
+          if (valorNaMesmaCelula) {
+            return valorNaMesmaCelula;
+          }
+
+          /*
+           * O rótulo pode estar em uma célula
+           * e o valor na célula ao lado.
+           */
+          for (
+            let proxima = indiceCelula + 1;
+            proxima < linha.length;
+            proxima++
+          ) {
+            const valorProximaCelula =
+              limparTexto(linha[proxima]);
+
+            if (!valorProximaCelula) continue;
+
+            if (
+              regexInicioRotulo.test(valorProximaCelula)
+            ) {
+              break;
+            }
+
+            const valor =
+              cortarNoProximoRotulo(valorProximaCelula);
+
+            if (valor) return valor;
+          }
+        }
+      }
+    }
+
+    return "";
+  }
+
+  /*
+   * Localiza exclusivamente a área do Tomador.
+   * Isso impede que seja utilizado o CNPJ da Process.
+   */
+  const indiceTomador = linhas.findIndex(linha =>
+    linha.some(celula =>
+      /Tomador\s*:/i.test(celula)
+    )
+  );
+
+  const inicioTomador =
+    indiceTomador >= 0 ? indiceTomador : 0;
+
+  const fimTomador =
+    indiceTomador >= 0
+      ? Math.min(indiceTomador + 15, linhas.length)
+      : linhas.length;
+
+  function obterNomeTomador() {
+    if (indiceTomador === -1) {
+      return (
+        obterCampo([
+          /Raz[aã]o\s+Social\s*:?\s*/i
+        ]) ||
+        obterCampo([
+          /Importador\s*:?\s*/i
+        ])
+      );
+    }
+
+    /*
+     * Verifica se o nome está na mesma célula:
+     * Tomador: NOME DA EMPRESA
+     */
+    const linhaTomador = linhas[indiceTomador];
+
+    for (const celulaOriginal of linhaTomador) {
+      const celula = limparTexto(celulaOriginal);
+      const match = celula.match(
+        /Tomador\s*:?\s*/i
+      );
+
+      if (!match) continue;
+
+      const nome = cortarNoProximoRotulo(
+        celula.substring(
+          match.index + match[0].length
+        )
+      );
+
+      if (nome) return nome;
+    }
+
+    /*
+     * Na sua planilha a estrutura é:
+     *
+     * Tomador:
+     * CNPJ: 52...
+     * HELDT IMPORTS LTDA
+     *
+     * Então procuramos a primeira linha sem rótulo
+     * após o campo Tomador.
+     */
+    for (
+      let indiceLinha = indiceTomador;
+      indiceLinha < fimTomador;
+      indiceLinha++
+    ) {
+      const linha = linhas[indiceLinha];
+
+      for (const celulaOriginal of linha) {
+        const celula = finalizarValor(celulaOriginal);
+
+        if (!celula) continue;
+
+        if (
+          /Tomador\s*:/i.test(celula) ||
+          regexInicioRotulo.test(celula)
+        ) {
+          continue;
+        }
+
+        /*
+         * Ignora CNPJ, CPF, telefone e valores numéricos.
+         */
+        if (
+          /^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/.test(celula) ||
+          /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(celula) ||
+          /^\(?\d{2}\)?\s*\d{4,5}-?\d{4}$/.test(celula) ||
+          /^[\d\s.,/()-]+$/.test(celula)
+        ) {
+          continue;
+        }
+
+        if (
+          /^(Descrição|Moeda|Valor|Dados|Resumo)/i.test(
+            celula
+          )
+        ) {
+          continue;
+        }
+
+        if (/[A-Za-zÀ-ÿ]/.test(celula)) {
+          return celula;
+        }
+      }
+    }
+
+    return "";
+  }
+
+  const dadosTomador = {
+    nome: obterNomeTomador(),
+
+    cnpj: obterCampo(
+      [/CNPJ\s*:?\s*/i],
+      inicioTomador,
+      fimTomador
+    ),
+
+    endereco: obterCampo(
+      [/Endere[cç]o\s*:?\s*/i],
+      inicioTomador,
+      fimTomador
+    ),
+
+    bairro: obterCampo(
+      [/Bairro\s*:?\s*/i],
+      inicioTomador,
+      fimTomador
+    ),
+
+    cidade: obterCampo(
+      [/Cidade\s*:?\s*/i],
+      inicioTomador,
+      fimTomador
+    ),
+
+    telefone: obterCampo(
+      [/Telefone\s*:?\s*/i],
+      inicioTomador,
+      fimTomador
+    )
+  };
+
+  const resultado = {
+    numerario: obterCampo([
+      /NUMER[ÁA]RIO\s*:?\s*/i
+    ]),
+
+    despachante: {
+      nome: "PROCESS LOGISTICA E COMERCIO EXTERIOR LTDA.",
+      endereco:
+        "Rua Alexandre Herculano - 197 - 8º ANDAR - Gonzaga",
+      cidade: "Santos - SP",
+      cep: "11050-031",
+      cnpj: "31.747.180/0001-01"
+    },
+
+    tomador: dadosTomador,
+
+    importador: obterCampo([
+      /Importador\s*:?\s*/i
+    ]),
+
+    referenciaCliente: obterCampo([
+      /Refer[eê]ncia\s+Cliente\s*:?\s*/i
+    ]),
+
+    processo: obterCampo([
+      /Processo\s+Nr\.?\s*:?\s*/i,
+      /N[º°o]\s*Processo\s*:?\s*/i
+    ]),
+
+    pesoBruto: obterCampo([
+      /Peso\s+Bruto\s*:?\s*/i
+    ]),
+
+    pesoCubado: obterCampo([
+      /Peso\s+Cubado\s*:?\s*/i
+    ]),
+
+    house: obterCampo([
+      /N[úu]mero\s+House\s*:?\s*/i,
+      /Numero\s+House\s*:?\s*/i,
+      /\bHouse\s*:?\s*/i
+    ]),
+
+    origem: obterCampo([
+      /Origem\s*:?\s*/i
+    ]),
+
+    saida: obterCampo([
+      /Sa[íi]da\s*:?\s*/i
+    ]),
+
+    destino: obterCampo([
+      /Destino\s*:?\s*/i
+    ]),
+
+    navioViagem: obterCampo([
+      /Navio\s*\/\s*Viagem\s*:?\s*/i
+    ]),
+
+    despesas: readDespesas(text),
+
+    banco: {
+      banco: "ITAU - 341",
+
+      agencia: obterCampo([
+        /Ag[eê]ncia\s*:?\s*/i
+      ]),
+
+      conta:
+        obterCampo([
+          /Conta\s*:?\s*/i
+        ]) ||
+        getContaBancaria(text),
+
+      pix: "CNPJ 31.747.180/0001-01"
+    },
+
+    dataEmissao: obterCampo([
+      /Data\s+(?:de\s+)?Emiss[aã]o\s*:?\s*/i
+    ]),
+
+    dataVencimento: obterCampo([
+      /Data\s+(?:de\s+)?Vencimento\s*:?\s*/i
+    ])
+  };
+
+  console.log("DADOS EXTRAÍDOS:", resultado);
+
+  return resultado;
+}
 
     function getContaBancaria(text) {
       const linhas = text.split("\n").map(l => l.trim());
@@ -576,7 +961,7 @@
             </tr>
             <tr>
               <td>${data.processo}</td>
-              <td>${data.importador || data.tomador.nome}</td>
+              <td>${data.tomador.nome || data.importador}</td>
               <td>${data.referenciaCliente}</td>
               <td>${data.destino}</td>
               <td>${data.saida}</td>
