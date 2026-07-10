@@ -324,62 +324,6 @@
         return match ? match[1].trim() : "";
       }
 
-      function getNomeCliente() {
-  const linhas = text
-    .split("\n")
-    .map(linha =>
-      linha
-        .replace(/[{}]/g, "")
-        .trim()
-    )
-    .filter(Boolean);
-
-  const indiceTomador = linhas.findIndex(linha =>
-    /^Tomador\s*:/i.test(linha)
-  );
-
-  if (indiceTomador !== -1) {
-    // Verifica se o nome está na mesma linha de "Tomador:"
-    const nomeNaMesmaLinha = linhas[indiceTomador]
-      .replace(/^Tomador\s*:?\s*/i, "")
-      .trim();
-
-    if (nomeNaMesmaLinha) {
-      return nomeNaMesmaLinha;
-    }
-
-    // Procura o nome nas linhas seguintes
-    for (
-      let i = indiceTomador + 1;
-      i < Math.min(indiceTomador + 6, linhas.length);
-      i++
-    ) {
-      const linha = linhas[i];
-
-      // Ignora campos que não são o nome do cliente
-      if (
-        /^CNPJ\s*:/i.test(linha) ||
-        /^CPF\s*:/i.test(linha) ||
-        /^Endereço\s*:/i.test(linha) ||
-        /^Bairro\s*:/i.test(linha) ||
-        /^Cidade\s*:/i.test(linha) ||
-        /^Estado\s*:/i.test(linha) ||
-        /^CEP\s*:/i.test(linha) ||
-        /^Telefone\s*:/i.test(linha)
-      ) {
-        continue;
-      }
-
-      return linha;
-    }
-  }
-
-  return (
-    getAfter("Razão Social") ||
-    getAfter("Importador") ||
-    ""
-  );
-}
       return {
         numerario: getByRegex(/NUMERÁRIO\s+([^\n]+)/i),
 
@@ -392,7 +336,7 @@
         },
 
         tomador: {
-          nome: getNomeCliente(),
+          nome: "HELDT IMPORTS LTDA",
           cnpj: getByRegex(/CNPJ:\s*([\d./-]+)/i),
           endereco: getAfter("Endereço"),
           bairro: getAfter("Bairro"),
