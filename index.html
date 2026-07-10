@@ -336,7 +336,7 @@
         },
 
         tomador: {
-          nome: "HELDT IMPORTS LTDA",
+          nome: getNomeCliente(),
           cnpj: getByRegex(/CNPJ:\s*([\d./-]+)/i),
           endereco: getAfter("Endereço"),
           bairro: getAfter("Bairro"),
