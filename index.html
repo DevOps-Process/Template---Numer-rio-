@@ -416,7 +416,7 @@
         },
 
         tomador: {
-          nome: getNomeTomador(),
+          nome: "HELDT IMPORTS LTDA",
           cnpj: getByRegex(/CNPJ:\s*([\d./-]+)/i),
           endereco: getAfter("Endereço"),
           bairro: getAfter("Bairro"),
@@ -656,7 +656,7 @@
             </tr>
             <tr>
               <td>${data.processo}</td>
-              <td>${data.tomador.nome || data.importador}</td>
+              <td>${data.importador || data.tomador.nome}</td>
               <td>${data.referenciaCliente}</td>
               <td>${data.destino}</td>
               <td>${data.saida}</td>
