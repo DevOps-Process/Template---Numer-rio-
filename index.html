@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
@@ -167,7 +168,7 @@
 <body>
 
   <div class="controls">
-    <input type="file" id="fileInput" accept=".xls,.html,.txt" />
+    <input type="file" id="fileInput" accept=".xls,.xlsx" />
 
     <select id="tipoRepasse">
       <option value="">Selecione o tipo</option>
@@ -193,6 +194,9 @@
     <p>Selecione o arquivo .xls para gerar o template.</p>
   </div>
 
+  <!-- Leitor real de arquivos Excel .xls e .xlsx -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
   <script>
     const fileInput = document.getElementById("fileInput");
     const printArea = document.getElementById("printArea");
@@ -206,9 +210,19 @@
       const file = e.target.files[0];
       if (!file) return;
 
-      currentData = await readNumerarioFile(file);
-      atualizarGlossario();
-      atualizarTemplate();
+      try {
+        currentData = await readNumerarioFile(file);
+        atualizarGlossario();
+        atualizarTemplate();
+      } catch (error) {
+        console.error("Erro ao ler o numerário:", error);
+        currentData = null;
+        printArea.innerHTML = `
+          <p style="color:#b00020; font-weight:bold;">
+            Não foi possível ler a planilha. Verifique o arquivo e tente novamente.
+          </p>
+        `;
+      }
     });
 
     tipoRepasse.addEventListener("change", () => {
@@ -300,112 +314,224 @@
     }
 
     async function readNumerarioFile(file) {
-      const html = await file.text();
-      const doc = new DOMParser().parseFromString(html, "text/html");
-
-      const text = doc.body.innerText
-        .replace(/\r/g, "")
-        .replace(/\n{2,}/g, "\n")
-        .trim();
-
-      function getAfter(label) {
-        const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(escaped + "\\s*:?\\s*([^\\n\\r{]+)", "i");
-        const match = text.match(regex);
-
-        return match
-          ? match[1].replace("{", "").trim()
-          : "";
+      if (typeof XLSX === "undefined") {
+        throw new Error("A biblioteca XLSX não foi carregada.");
       }
 
-      function getByRegex(regex) {
-        const match = text.match(regex);
-        return match ? match[1].trim() : "";
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, {
+        type: "array",
+        cellDates: true
+      });
+
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+
+      if (!sheet) {
+        throw new Error("A planilha não possui nenhuma aba legível.");
+      }
+
+      const rawRows = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+        defval: "",
+        raw: true
+      });
+
+      const textRows = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+        defval: "",
+        raw: false,
+        dateNF: "dd/mm/yyyy"
+      });
+
+      function limpar(valor) {
+        return String(valor ?? "")
+          .replace(/\u00A0/g, " ")
+          .replace(/[{}]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
+      function normalizar(valor) {
+        return limpar(valor)
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toUpperCase();
+      }
+
+      function escaparRegex(valor) {
+        return String(valor).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }
+
+      function textoCelula(linha, coluna) {
+        return limpar(textRows[linha]?.[coluna]);
+      }
+
+      function valorBruto(linha, coluna) {
+        return rawRows[linha]?.[coluna] ?? "";
+      }
+
+      function acharRotulo(rotulos, inicio = 0, fim = textRows.length) {
+        const lista = Array.isArray(rotulos) ? rotulos : [rotulos];
+
+        for (let linha = inicio; linha < Math.min(fim, textRows.length); linha++) {
+          for (let coluna = 0; coluna < (textRows[linha]?.length || 0); coluna++) {
+            const conteudo = textoCelula(linha, coluna);
+            if (!conteudo) continue;
+
+            for (const rotulo of lista) {
+              const regex = new RegExp(`^${escaparRegex(rotulo)}\\s*:?`, "i");
+              if (regex.test(conteudo)) {
+                return { linha, coluna, conteudo, rotulo, regex };
+              }
+            }
+          }
+        }
+
+        return null;
+      }
+
+      function valorDepoisDoRotulo(rotulos, inicio = 0, fim = textRows.length) {
+        const encontrado = acharRotulo(rotulos, inicio, fim);
+        if (!encontrado) return "";
+
+        const restante = limpar(encontrado.conteudo.replace(encontrado.regex, ""));
+        if (restante) return restante;
+
+        for (let coluna = encontrado.coluna + 1; coluna < (textRows[encontrado.linha]?.length || 0); coluna++) {
+          const aoLado = textoCelula(encontrado.linha, coluna);
+          if (aoLado) return aoLado;
+        }
+
+        for (let linha = encontrado.linha + 1; linha < Math.min(encontrado.linha + 8, fim); linha++) {
+          const abaixo = textoCelula(linha, encontrado.coluna);
+          if (abaixo) return abaixo;
+        }
+
+        return "";
       }
 
       function getNomeTomador() {
-  /*
-   * O arquivo XLS contém os textos separados por caracteres
-   * internos do Excel. Aqui transformamos somente esses
-   * separadores em linhas, sem alterar a leitura já existente.
-   */
-  const partes = html
-    .replace(/\uFFFD/g, "")
-    .replace(/[\u0000-\u001F\u007F-\u009F]+/g, "\n")
-    .split("\n")
-    .map(valor =>
-      String(valor)
-        .replace(/\s+/g, " ")
-        .trim()
-    )
-    .filter(Boolean);
+        const tomador = acharRotulo(["Tomador"]);
+        if (!tomador) return "";
 
-  const indiceTomador = partes.findIndex(valor =>
-    /^Tomador\s*:?\s*$/i.test(valor) ||
-    /^Tomador\s*:/i.test(valor)
-  );
+        const importador = acharRotulo(["Importador"], tomador.linha + 1);
+        const fim = importador ? importador.linha : Math.min(tomador.linha + 12, textRows.length);
 
-  if (indiceTomador === -1) {
-    return "";
-  }
+        const nomeNaMesmaCelula = limpar(
+          tomador.conteudo.replace(/^Tomador\s*:?\s*/i, "")
+        );
 
-  /*
-   * Procura o CNPJ que aparece depois de "Tomador".
-   */
-  let indiceCnpj = -1;
+        if (nomeNaMesmaCelula) return nomeNaMesmaCelula;
 
-  for (
-    let i = indiceTomador + 1;
-    i < Math.min(indiceTomador + 8, partes.length);
-    i++
-  ) {
-    if (/^CNPJ\s*:\s*[\d./-]+/i.test(partes[i])) {
-      indiceCnpj = i;
-      break;
-    }
-  }
+        const rotulosIgnorados = [
+          "CNPJ", "CPF", "ENDERECO", "BAIRRO", "CEP",
+          "CIDADE", "ESTADO", "TELEFONE"
+        ];
 
-  const inicioBusca =
-    indiceCnpj !== -1
-      ? indiceCnpj + 1
-      : indiceTomador + 1;
+        for (let linha = tomador.linha + 1; linha < fim; linha++) {
+          for (let coluna = 0; coluna < (textRows[linha]?.length || 0); coluna++) {
+            const candidato = textoCelula(linha, coluna);
+            if (!candidato) continue;
 
-  /*
-   * Na planilha, o primeiro texto depois do CNPJ
-   * é o nome do tomador.
-   */
-  for (
-    let i = inicioBusca;
-    i < Math.min(inicioBusca + 5, partes.length);
-    i++
-  ) {
-    let candidato = partes[i]
-      .replace(/^[^A-Za-zÀ-ÿ0-9]+/, "")
-      .replace(
-        /[^A-Za-zÀ-ÿ0-9\s.&'(),/-]+$/g,
-        ""
-      )
-      .trim();
+            const normalizado = normalizar(candidato);
+            const ehRotulo = rotulosIgnorados.some(rotulo =>
+              normalizado === rotulo || normalizado.startsWith(`${rotulo}:`)
+            );
 
-    if (!candidato) continue;
+            if (ehRotulo) continue;
+            if (/^[\d\s.,/()\-]+$/.test(candidato)) continue;
 
-    if (
-      /^(Endere[cç]o|Endereco|Bairro|Cidade|Telefone|Importador|Refer[eê]ncia|Processo)\s*:/i.test(
-        candidato
-      )
-    ) {
-      break;
-    }
+            return candidato;
+          }
+        }
 
-    if (/[A-Za-zÀ-ÿ]/.test(candidato)) {
-      return candidato;
-    }
-  }
+        return "";
+      }
 
-  return "";
-}
-      return {
-        numerario: getByRegex(/NUMERÁRIO\s+([^\n]+)/i),
+      function campoTomador(rotulos) {
+        const tomador = acharRotulo(["Tomador"]);
+        if (!tomador) return "";
+
+        const importador = acharRotulo(["Importador"], tomador.linha + 1);
+        const fim = importador ? importador.linha : Math.min(tomador.linha + 12, textRows.length);
+
+        return valorDepoisDoRotulo(rotulos, tomador.linha + 1, fim);
+      }
+
+      function numeroPlanilha(linha, coluna) {
+        const bruto = valorBruto(linha, coluna);
+
+        if (typeof bruto === "number") return bruto;
+
+        return moedaParaNumero(bruto);
+      }
+
+      function formatarNumero(valor, casasMaximas = 3) {
+        const numero = Number(valor);
+        if (!Number.isFinite(numero)) return limpar(valor);
+
+        return numero.toLocaleString("pt-BR", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: casasMaximas
+        });
+      }
+
+      function lerValorAbaixoDoRotulo(rotulos, formatarComoNumero = false) {
+        const encontrado = acharRotulo(rotulos);
+        if (!encontrado) return "";
+
+        for (let linha = encontrado.linha + 1; linha < Math.min(encontrado.linha + 8, textRows.length); linha++) {
+          const texto = textoCelula(linha, encontrado.coluna);
+          if (!texto) continue;
+
+          if (formatarComoNumero) {
+            return formatarNumero(numeroPlanilha(linha, encontrado.coluna));
+          }
+
+          return texto;
+        }
+
+        return "";
+      }
+
+      function lerDespesasExcel() {
+        const cabecalho = acharRotulo(["Descrição", "Descricao"]);
+        if (!cabecalho) return [];
+
+        const despesas = [];
+
+        for (let linha = cabecalho.linha + 1; linha < textRows.length; linha++) {
+          const descricao = textoCelula(linha, 0);
+          const moeda = textoCelula(linha, 1).toUpperCase();
+
+          if (/^TOTAL\s*:?$/i.test(descricao) || /^DADOS BANCARIOS/i.test(normalizar(descricao))) {
+            break;
+          }
+
+          if (!descricao || !["BRL", "USD"].includes(moeda)) continue;
+
+          const valorMoeda = numeroPlanilha(linha, 2);
+          const taxa = numeroPlanilha(linha, 3);
+          const valorReais = numeroPlanilha(linha, 4);
+
+          despesas.push({
+            descricao,
+            moeda,
+            valorMoeda: numeroParaMoeda(valorMoeda),
+            taxa: Number(taxa || 0).toLocaleString("pt-BR", {
+              minimumFractionDigits: 5,
+              maximumFractionDigits: 5
+            }),
+            valorReais: numeroParaMoeda(valorReais)
+          });
+        }
+
+        return despesas;
+      }
+
+      const resultado = {
+        numerario: valorDepoisDoRotulo(["NUMERÁRIO", "NUMERARIO"]),
 
         despachante: {
           nome: "PROCESS LOGISTICA E COMERCIO EXTERIOR LTDA.",
@@ -416,92 +542,45 @@
         },
 
         tomador: {
-          nome: "HELDT IMPORTS LTDA",
-          cnpj: getByRegex(/CNPJ:\s*([\d./-]+)/i),
-          endereco: getAfter("Endereço"),
-          bairro: getAfter("Bairro"),
-          cidade: getAfter("Cidade"),
-          telefone: getAfter("Telefone")
+          nome: getNomeTomador(),
+          cnpj: campoTomador(["CNPJ"]),
+          endereco: campoTomador(["Endereço", "Endereco"]),
+          bairro: campoTomador(["Bairro"]),
+          cidade: campoTomador(["Cidade"]),
+          telefone: campoTomador(["Telefone"])
         },
 
-        importador: getAfter("Importador"),
-        referenciaCliente: getAfter("Referencia Cliente"),
-        processo: getAfter("Processo Nr."),
-        pesoBruto: getAfter("Peso bruto"),
-        pesoCubado: getAfter("Peso Cubado"),
-        house: getAfter("Número House"),
-        origem: getAfter("Origem"),
-        saida: getAfter("Saída"),
-        destino: getAfter("Destino"),
-        navioViagem: getAfter("Navio / Viagem"),
+        importador: lerValorAbaixoDoRotulo(["Importador"]),
+        referenciaCliente: lerValorAbaixoDoRotulo(["Referencia Cliente", "Referência Cliente"]),
+        processo: lerValorAbaixoDoRotulo(["Processo Nr.", "Processo Nr", "Nº Processo"]),
+        pesoBruto: lerValorAbaixoDoRotulo(["Peso bruto", "Peso Bruto"], true),
+        pesoCubado: lerValorAbaixoDoRotulo(["Peso Cubado"], true),
+        house: lerValorAbaixoDoRotulo(["Número House", "Numero House", "House"]),
+        origem: lerValorAbaixoDoRotulo(["Origem"]),
+        saida: lerValorAbaixoDoRotulo(["Saída", "Saida"]),
+        destino: lerValorAbaixoDoRotulo(["Destino"]),
+        navioViagem: lerValorAbaixoDoRotulo(["Navio / Viagem", "Navio/Viagem"]),
 
-        despesas: readDespesas(text),
+        despesas: lerDespesasExcel(),
 
         banco: {
-          banco: "ITAU - 341",
-          agencia: getAfter("Agência"),
-          conta: getContaBancaria(text),
-          pix: "CNPJ 31.747.180/0001-01"
+          banco: valorDepoisDoRotulo(["Banco"]),
+          agencia: valorDepoisDoRotulo(["Agência", "Agencia"]),
+          conta: valorDepoisDoRotulo(["Conta"]),
+          pix: valorDepoisDoRotulo(["Chave PIX CNPJ", "Chave PIX", "PIX"])
         },
 
-        dataEmissao: getAfter("Data Emissão"),
-        dataVencimento: getAfter("Data Vencimento")
+        dataEmissao: valorDepoisDoRotulo(["Data Emissão", "Data Emissao"]),
+        dataVencimento: valorDepoisDoRotulo(["Data Vencimento"])
       };
-    }
 
-    function getContaBancaria(text) {
-      const linhas = text.split("\n").map(l => l.trim());
-
-      const linhaConta = linhas.find(linha =>
-        /^Conta:/i.test(linha)
-      );
-
-      if (!linhaConta) return "";
-
-      return linhaConta
-        .replace(/^Conta:\s*/i, "")
-        .replace(/[{}]/g, "")
-        .trim();
-    }
-
-    function readDespesas(text) {
-      const inicio = text.search(/Valores debitados na conta do Despachante/i);
-      const fim = text.search(/Dados bancários/i);
-
-      if (inicio === -1) return [];
-
-      const bloco = text.substring(inicio, fim > inicio ? fim : text.length);
-
-      const regex = /(.+?)\s+(BRL|USD)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/gi;
-
-      const despesas = [];
-      let match;
-
-      while ((match = regex.exec(bloco)) !== null) {
-        let descricao = match[1]
-          .replace(/Valores debitados na conta do Despachante/gi, "")
-          .replace(/Descrição/gi, "")
-          .replace(/Moeda/gi, "")
-          .replace(/Valor na Moeda/gi, "")
-          .replace(/Taxa/gi, "")
-          .replace(/Valor em Reais/gi, "")
-          .trim();
-
-        if (!descricao || /total/i.test(descricao)) continue;
-
-        despesas.push({
-          descricao: descricao,
-          moeda: match[2],
-          valorMoeda: match[3],
-          taxa: match[4],
-          valorReais: match[5]
-        });
-      }
-
-      return despesas;
+      console.log("DADOS EXTRAÍDOS CORRETAMENTE:", resultado);
+      return resultado;
     }
 
     function moedaParaNumero(valor) {
+      if (typeof valor === "number") return valor;
+
       return Number(
         String(valor)
           .replace(/\./g, "")
@@ -510,7 +589,7 @@
     }
 
     function numeroParaMoeda(valor) {
-      return valor.toLocaleString("pt-BR", {
+      return Number(valor || 0).toLocaleString("pt-BR", {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
       });
@@ -656,7 +735,7 @@
             </tr>
             <tr>
               <td>${data.processo}</td>
-              <td>${data.importador || data.tomador.nome}</td>
+              <td>${data.tomador.nome || data.importador}</td>
               <td>${data.referenciaCliente}</td>
               <td>${data.destino}</td>
               <td>${data.saida}</td>
